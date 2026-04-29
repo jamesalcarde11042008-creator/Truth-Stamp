@@ -27,12 +27,18 @@ export async function connectWallet() {
 }
 
 export async function purchaseCover(flightId: string, premium: number, payout: number, delayMin: number) {
-  const address = await getAddress();
-  if (!address) throw new Error("Wallet not connected");
+  const result = await getAddress();
+  if (!result) throw new Error("Wallet not connected");
+
+  // Handle both string and object returns from Freighter
+  const address = typeof result === "string" ? result : result.address;
+  if (!address) throw new Error("Could not retrieve wallet address");
 
   // USDC has 7 decimals on Stellar
   const premiumBigInt = BigInt(Math.floor(premium * 10_000_000));
   const payoutBigInt = BigInt(Math.floor(payout * 10_000_000));
+
+  console.log("Purchasing cover for:", { address, flightId, premiumBigInt, payoutBigInt, delayMin });
 
   const tx = await client.purchase_cover({
     passenger: address,

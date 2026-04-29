@@ -21,7 +21,7 @@ fn setup(
     env: &Env,
     passenger_balance: i128,
 ) -> (
-    FlightGuardContractClient,
+    FlightGuardContractClient<'_>,
     Address, // passenger
     Address, // oracle
     Address, // usdc contract id
@@ -37,13 +37,16 @@ fn setup(
     let usdc_address = usdc_id.address();
 
     // Mint starting balance to the passenger
-    token::StellarAssetClient::new(env, &usdc_address)
-        .mint(&passenger, &passenger_balance);
+    let usdc_admin = token::StellarAssetClient::new(env, &usdc_address);
+    usdc_admin.mint(&passenger, &passenger_balance);
 
     // Deploy and initialize the FlightGuard contract
-    let contract_id = env.register_contract(None, FlightGuardContract);
+    let contract_id = env.register(FlightGuardContract, ());
     let client = FlightGuardContractClient::new(env, &contract_id);
     client.initialize(&oracle, &usdc_address);
+
+    // Fund the contract so it can pay out
+    usdc_admin.mint(&contract_id, &100_000_000);
 
     (client, passenger, oracle, usdc_address)
 }
@@ -51,11 +54,6 @@ fn setup(
 // ---------------------------------------------------------------------------
 // Test 1 — Happy path: full lifecycle executes end-to-end
 // ---------------------------------------------------------------------------
-//
-// Scenario: passenger buys cover, oracle reports a qualifying delay,
-// the contract auto-settles and transfers the payout.
-// Asserts the passenger's final USDC balance equals:
-//   starting_balance - premium + payout
 #[test]
 fn test_happy_path_full_lifecycle() {
     let env = Env::default();
@@ -94,20 +92,15 @@ fn test_happy_path_full_lifecycle() {
 // ---------------------------------------------------------------------------
 // Test 2 — Edge case: unauthorized oracle call is rejected
 // ---------------------------------------------------------------------------
-//
-// An address that is NOT the registered oracle attempts to call
-// oracle_report. The contract must panic (require_auth fails).
 #[test]
-#[should_panic]
+#[should_panic(expected = "HostError: Error(Auth, InvalidAction)")]
 fn test_unauthorized_oracle_rejected() {
     let env = Env::default();
-    // Note: we do NOT call env.mock_all_auths() here so auth is enforced.
-    // We only mock auth for setup calls, then clear mocks.
     env.mock_all_auths();
 
     let passenger = Address::generate(&env);
     let oracle    = Address::generate(&env);
-    let impostor  = Address::generate(&env); // not the real oracle
+    let impostor  = Address::generate(&env); 
     let admin     = Address::generate(&env);
 
     let usdc_id = env.register_stellar_asset_contract_v2(admin.clone());
@@ -115,7 +108,7 @@ fn test_unauthorized_oracle_rejected() {
     token::StellarAssetClient::new(&env, &usdc_address)
         .mint(&passenger, &1_000_000);
 
-    let contract_id = env.register_contract(None, FlightGuardContract);
+    let contract_id = env.register(FlightGuardContract, ());
     let client = FlightGuardContractClient::new(&env, &contract_id);
     client.initialize(&oracle, &usdc_address);
 
@@ -127,24 +120,16 @@ fn test_unauthorized_oracle_rejected() {
         &120_u32,
     );
 
-    // Stop mocking all auths — now auth checks are real
-    // Calling oracle_report as `impostor` should fail auth for `oracle`
-    // The SDK will panic because `oracle` did not authorize this call.
-    //
-    // In a real environment this triggers a HOST_ERROR auth failure.
-    // In the test environment with no mock, require_auth panics.
-    env.set_auths(&[]); // clear all mocked auths
+    env.set_auths(&[]); 
 
-    // This call should panic — impostor is not the registered oracle
+    // This call should fail because impostor is not the oracle
+    // In Soroban, unauthorized require_auth often panics with HostError
     client.oracle_report(&symbol_short!("SQ317"), &200_u32);
 }
 
 // ---------------------------------------------------------------------------
 // Test 3 — State verification: settled flag is true after payout
 // ---------------------------------------------------------------------------
-//
-// After a qualifying oracle report, the Policy stored in ledger must
-// have `settled == true`. This prevents double-spend at the storage level.
 #[test]
 fn test_policy_settled_flag_after_oracle_payout() {
     let env = Env::default();
@@ -177,12 +162,8 @@ fn test_policy_settled_flag_after_oracle_payout() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4 — Edge case: double-claim on an already-settled policy panics
+// Test 4 — Edge case: double-claim on an already-settled policy
 // ---------------------------------------------------------------------------
-//
-// After the oracle auto-settles a policy, any further call to claim_payout
-// must panic with "already settled". This prevents any re-entrancy or
-// double-spend even if the passenger calls claim manually.
 #[test]
 #[should_panic(expected = "already settled")]
 fn test_double_claim_rejected() {
@@ -209,11 +190,6 @@ fn test_double_claim_rejected() {
 // ---------------------------------------------------------------------------
 // Test 5 — No payout when delay is below the threshold
 // ---------------------------------------------------------------------------
-//
-// Oracle reports a 45-minute delay against a 120-minute threshold.
-// The contract must NOT transfer any payout. The passenger's balance
-// after the oracle report must equal their balance after buying cover
-// (i.e. starting_balance - premium, with no payout added).
 #[test]
 fn test_no_payout_when_delay_below_threshold() {
     let env = Env::default();

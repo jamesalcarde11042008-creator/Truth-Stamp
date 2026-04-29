@@ -55,10 +55,23 @@ const Index = () => {
       toast.info("Purchasing cover...", { description: `Registering flight ${flightId}` });
       const result = await purchaseCover(flightId, 5, 200, THRESHOLD);
       console.log("Purchase result:", result);
-      toast.success("Cover purchased!", { description: `Flight ${flightId} is now protected on-chain.` });
-    } catch (e) {
+      const shortHash = (result as any).hash ? `${(result as any).hash.slice(0, 6)}...${(result as any).hash.slice(-6)}` : "";
+      toast.success("Cover purchased!", { description: `Flight ${flightId} is protected. Tx: ${shortHash}` });
+    } catch (e: any) {
       console.error(e);
-      toast.error("Purchase failed", { description: String(e) });
+      let errorMsg = String(e);
+      if (errorMsg.includes("invalid amount")) {
+        errorMsg = "Invalid premium or payout amount.";
+      } else if (errorMsg.includes("policy already exists")) {
+        errorMsg = "A policy already exists for this flight.";
+      } else if (errorMsg.includes("not authorized")) {
+        errorMsg = "You are not authorized to perform this action.";
+      } else if (errorMsg.includes("policy not found")) {
+        errorMsg = "Policy not found.";
+      } else if (errorMsg.includes("already settled")) {
+        errorMsg = "This policy has already been settled.";
+      }
+      toast.error("Purchase failed", { description: errorMsg });
     } finally {
       setIsPurchasing(false);
     }

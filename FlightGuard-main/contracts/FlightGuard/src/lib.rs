@@ -4,9 +4,26 @@
 // Soroban smart contract: escrows premiums, auto-settles on oracle delay report
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
+    contract, contracterror, contractimpl, contracttype,
     token, Address, Env, Symbol,
 };
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    AlreadyInitialized = 1,
+    InvalidAmount = 2,
+    PolicyAlreadyExists = 3,
+    PolicyNotFound = 4,
+    AlreadySettled = 5,
+    ThresholdNotMet = 6,
+    NotAuthorized = 7,
+}
 
 // ---------------------------------------------------------------------------
 // Storage key types
@@ -102,17 +119,14 @@ impl FlightGuardContract {
         passenger.require_auth();
 
         // Validate inputs
-        if premium <= 0 {
-            panic!("premium must be positive");
-        }
-        if payout <= 0 {
-            panic!("payout must be positive");
+        if premium <= 0 || payout <= 0 {
+            panic!("invalid amount");
         }
 
         // Prevent duplicate policies for the same flight id
         let key = DataKey::Policy(flight_id.clone());
         if env.storage().instance().has(&key) {
-            panic!("policy already exists for this flight");
+            panic!("policy already exists");
         }
 
         // Retrieve the USDC token address set at initialization
@@ -120,7 +134,7 @@ impl FlightGuardContract {
             .storage()
             .instance()
             .get(&DataKey::UsdcToken)
-            .unwrap();
+            .expect("not authorized");
 
         // Transfer the premium from the passenger's wallet into the contract.
         // Stellar's token interface handles the actual on-chain USDC move.
@@ -174,7 +188,7 @@ impl FlightGuardContract {
 
         // Re-check the delay threshold
         if reported_delay < policy.delay_min {
-            panic!("delay threshold not met");
+            panic!("threshold not met");
         }
 
         // Execute the USDC payout
@@ -182,7 +196,7 @@ impl FlightGuardContract {
             .storage()
             .instance()
             .get(&DataKey::UsdcToken)
-            .unwrap();
+            .expect("not authorized");
 
         token::Client::new(&env, &usdc).transfer(
             &env.current_contract_address(),
@@ -214,7 +228,7 @@ impl FlightGuardContract {
             .storage()
             .instance()
             .get(&DataKey::Oracle)
-            .unwrap();
+            .expect("not authorized");
         oracle.require_auth();
 
         let key = DataKey::Policy(flight_id.clone());
@@ -238,7 +252,7 @@ impl FlightGuardContract {
                 .storage()
                 .instance()
                 .get(&DataKey::UsdcToken)
-                .unwrap();
+                .expect("not authorized");
 
             // Send payout directly to passenger — this is the core value prop:
             // money moves before the passenger even leaves the gate.
@@ -271,6 +285,8 @@ impl FlightGuardContract {
         env.storage()
             .instance()
             .get(&DataKey::Oracle)
-            .unwrap()
+            .expect("not authorized")
     }
 }
+
+mod test;

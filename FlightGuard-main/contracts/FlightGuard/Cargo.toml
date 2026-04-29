@@ -12,13 +12,13 @@ crate-type = ["cdylib", "rlib"]
 # Runtime dependencies
 # ---------------------------------------------------------------------------
 [dependencies]
-soroban-sdk = "20.0.0"
+soroban-sdk = { workspace = true }
 
 # ---------------------------------------------------------------------------
 # Test-only dependencies (enables testutils + mock environment)
 # ---------------------------------------------------------------------------
 [dev-dependencies]
-soroban-sdk = { version = "20.0.0", features = ["testutils"] }
+soroban-sdk = { workspace = true, features = ["testutils"] }
 
 # ---------------------------------------------------------------------------
 # Release profile — optimized for Wasm output size and correctness
